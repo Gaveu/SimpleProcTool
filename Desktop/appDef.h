@@ -2,7 +2,7 @@
 #include<stdio.h>
 #include<windows.h>
 #include<winioctl.h>
-
+#include<Psapi.h>
 
 #define DE_MAX_FILE_NAME_LEN (64)
 #define	DE_MAX_PATH_LEN	(512)
@@ -11,6 +11,7 @@
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 #define STATUS_INSUFFICIENT_RESOURCES    ((NTSTATUS)0xC000009AL)
 #define STATUS_SUCCESS                   ((NTSTATUS)0x00000000L)
+#define STATUS_UNSUCCESSFUL              ((NTSTATUS)0xC0000001L)
 
 
 
@@ -106,3 +107,29 @@ NTSTATUS PsResumeByPid(IN HANDLE pid);
 //进程结束通信函数
 //向设备对象发送功能码TerminateProc及指定的进程ID
 NTSTATUS PsTerminateByPid(IN HANDLE pid);
+
+
+
+/*用户层数据函数*/
+//CPU利用率相关函数
+//时间转换
+//将传入的文件时间的低位输出
+static __int64 file_time_2_utc(IN const FILETIME *ftime);
+
+//获取cpu核数
+static int get_processor_number();
+
+//内存占有相关函数
+//获取内存占有
+int get_memory_usage(IN HANDLE hProcess, OUT SIZE_T *pMem, OUT SIZE_T *pVMem);
+
+//给定pid，获取其CPU占有率与内存占有
+NTSTATUS PsGetUsage(
+	IN HANDLE pid,
+	OUT int *pCpuUsage,
+	OUT SIZE_T *pMem,
+	OUT SIZE_T *pVMem
+);
+
+//获取系统信息
+void getSysInfo();

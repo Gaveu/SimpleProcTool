@@ -40,6 +40,11 @@ VOID EmptyGlMod()
 //打开并连接到指定的设备对象
 NTSTATUS Init()
 {
+	FILETIME ftIdle;
+	FILETIME ftKernel;
+	FILETIME ftUser;
+
+	//连接至驱动的设备对象
 	hDevice = CreateFile(
 		TEXT("\\\\.\\ProcToolDev"),
 		GENERIC_ALL,
@@ -54,12 +59,21 @@ NTSTATUS Init()
 		printf("Init:File Create Failed!\n");
 		return STATUS_INVALID_HANDLE;
 	}
+
+	//初始化通信全局缓冲区
 	glBuf = (PCHAR)malloc(DE_MAX_BUF_LEN*sizeof(CHAR));
 	if (!glBuf)
 	{
 		printf("Init:Memory Allocate Failed!\n");
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
+
+	//初始化CPU利用率的相关全局变脸
+	GetSystemTimes(&ftIdle, &ftKernel, &ftUser);
+	preFtIdle = FileTimeToDouble(&ftIdle);
+	preFtUser = FileTimeToDouble(&ftUser);
+	preFtKernel = FileTimeToDouble(&ftKernel);
+
 	return STATUS_SUCCESS;
 }
 
@@ -404,94 +418,10 @@ NTSTATUS PsTerminateByPid(IN HANDLE pid)
 
 
 /*用户层数据函数*/
-//CPU利用率相关函数
-//时间转换
-//将传入的文件时间的低位输出
-static __int64 file_time_2_utc(IN const FILETIME *ftime)
+//转换文件时间为double类型
+DOUBLE FileTimeToDouble(FILETIME* pFiletime)
 {
-	LARGE_INTEGER li;
-	li.LowPart = ftime->dwLowDateTime;
-	li.HighPart = ftime->dwHighDateTime;
-	return li.QuadPart;
-}
-
-//获取cpu核数
-static int get_processor_number()
-{
-	SYSTEM_INFO info;
-	GetSystemInfo(&info);
-	return (int)info.dwNumberOfProcessors;
-}
-
-//返回CPU占有率
-int get_cpu_usage(HANDLE pid)
-{
-	//cpu数量
-	static int processorNum = -1;
-	//上一次的时间
-	static __int64 lasTime = 0;
-	static __int64 lastSystemTime = 0;
-
-	FILETIME now;
-	FILETIME creation_time;
-	FILETIME exit_time;
-	FILETIME kernel_time;
-	FILETIME user_time;
-	__int64 system_time;
-	__int64 time;
-	__int64 system_time_delta;
-	__int64 time_delta;
-
-	int cpu = -1;
-
-	if (processorNum == -1)
-	{
-		processorNum = get_processor_number();
-	}
-
-	GetSystemTimeAsFileTime(&now);
-
-	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, (DWORD)pid);
-	if (!GetProcessTimes(hProcess, &creation_time, &exit_time, &kernel_time, &user_time))
-	{
-		return -1;
-	}
-	system_time = (file_time_2_utc(&kernel_time) + file_time_2_utc(&user_time)) / processorNum;
-	time = file_time_2_utc(&now);
-
-	if ((lastSystemTime == 0) || (lasTime == 0))
-	{
-		lastSystemTime = system_time;
-		lasTime = time;
-		return -1;
-	}
-
-	system_time_delta = system_time - lastSystemTime;
-	time_delta = time - lasTime;
-
-	if (time_delta == 0)
-		return -1;
-
-	cpu = (int)((system_time_delta * 100 + time_delta / 2) / time_delta);
-	lastSystemTime = system_time;
-	lasTime = time;
-	return cpu;
-}
-
-
-
-//内存占有相关函数
-//获取内存占有率
-int get_memory_usage(IN HANDLE hProcess,OUT SIZE_T *pMem,OUT SIZE_T *pVMem)
-{
-	PROCESS_MEMORY_COUNTERS pmc;
-	if (GetProcessMemoryInfo(hProcess, &pmc, sizeof(pmc)))
-	{
-		if (pMem) *pMem = pmc.WorkingSetSize;
-		if (pVMem) *pVMem = pmc.PagefileUsage;
-		return 0;
-	}
-	return -1;
+	return (double)((*pFiletime).dwHighDateTime * 4.294967296E9) + (double)(*pFiletime).dwLowDateTime;
 }
 
 /*
@@ -510,75 +440,51 @@ typedef struct _PROCESS_MEMORY_COUNTERS {
 typedef PROCESS_MEMORY_COUNTERS *PPROCESS_MEMORY_COUNTERS;
 */
 
-//给定pid，获取其CPU占有率与内存占有
-NTSTATUS PsGetUsage(
-	IN HANDLE pid,
-	OUT int *pCpuUsage,
-	OUT SIZE_T *pMem,
-	OUT SIZE_T *pVMem
-)
+//总CPU占有率与内存占有
+NTSTATUS PsGetUsage()
 {
-	NTSTATUS status;
-	//cpu数量
-	static int processorNum = -1;
-	//上一次的时间
-	static __int64 lasTime = 0;
-	static __int64 lastSystemTime = 0;
+	FILETIME ftIdle;
+	FILETIME ftKernel;
+	FILETIME ftUser;
+	DOUBLE nowFtIdle;
+	DOUBLE nowFtKernel;
+	DOUBLE nowFtUser;
+	MEMORYSTATUSEX msex;
+	int nCpuUsage = -1;
+	DWORD dwMemUsage = -1;
 
-	FILETIME now;
-	FILETIME creation_time;
-	FILETIME exit_time;
-	FILETIME kernel_time;
-	FILETIME user_time;
-	__int64 system_time;
-	__int64 time;
-	__int64 system_time_delta;
-	__int64 time_delta;
+	//获取cpu利用率
+	GetSystemTimes(&ftIdle, &ftKernel, &ftUser);
+	nowFtIdle = FileTimeToDouble(&ftIdle);
+	nowFtKernel = FileTimeToDouble(&ftKernel);
+	nowFtUser = FileTimeToDouble(&ftUser);
+	nCpuUsage = (int)(100.0 - (nowFtIdle - preFtIdle) / (nowFtKernel - preFtKernel + nowFtUser - preFtUser)*100.0);
+	preFtIdle = nowFtIdle;
+	preFtKernel = nowFtKernel;
+	preFtUser = nowFtUser;
 
-	if (processorNum == -1)
-	{
-		processorNum = get_processor_number();
-	}
+	//获取总内存占有
+	msex.dwLength = sizeof(MEMORYSTATUSEX);
+	GlobalMemoryStatusEx(&msex);
+	printf("CPU占用率: %d\n", nCpuUsage);
+	printf("内存占用率: %ld\n", msex.dwMemoryLoad);
+	printf("可用物理内存/总物理内存: %lluB/%lluB\t%d%%\n",
+		msex.ullAvailPhys,
+		msex.ullTotalPhys,
+		(int)((double)msex.ullAvailPhys / (double)msex.ullTotalPhys*100.0)
+	);
+	printf("可用页内内存/总页内内存: %lluB/%lluB\t%d%%\n",
+		msex.ullAvailPageFile,
+		msex.ullTotalPageFile,
+		(int)((double)msex.ullAvailPageFile / (double)msex.ullTotalPageFile*100.0)
+	);
+	printf("可用用户态内存/总用户态内存: %lluB/%lluB\t%d%%\n",
+		msex.ullAvailVirtual,
+		msex.ullTotalVirtual,
+		(int)((double)msex.ullAvailVirtual / (double)msex.ullTotalVirtual*100.0)
+	);
+	printf("可用用户态扩展内存: %lluB\n\n", msex.ullAvailExtendedVirtual);
 
-	GetSystemTimeAsFileTime(&now);
-
-	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, (DWORD)pid);
-	if (!GetProcessTimes(hProcess, &creation_time, &exit_time, &kernel_time, &user_time))
-	{
-		status = GetLastError();
-		printf("PsGetUsage():GetProcTimes Failed!0x%x\n", status);
-		return STATUS_UNSUCCESSFUL;
-	}
-	system_time = (file_time_2_utc(&kernel_time) + file_time_2_utc(&user_time)) / processorNum;
-	time = file_time_2_utc(&now);
-
-	if ((lastSystemTime == 0) || (lasTime == 0))
-	{
-		lastSystemTime = system_time;
-		lasTime = time;
-		printf("PsGetUsage():LasTime Zero!\n");
-		return STATUS_UNSUCCESSFUL;
-	}
-
-	system_time_delta = system_time - lastSystemTime;
-	time_delta = time - lasTime;
-
-	if (time_delta == 0)
-	{
-		printf("PsGetUsage():TimeDelta Zero!\n");
-		return STATUS_UNSUCCESSFUL;
-	}
-
-	lastSystemTime = system_time;
-	lasTime = time;
-
-	if (get_memory_usage(hProcess, pMem, pVMem))
-	{
-		printf("PsGetUsage():GetMemoryUsage Failed!\n");
-		return STATUS_UNSUCCESSFUL;
-	}
-
-	*pCpuUsage = (int)((system_time_delta * 100 + time_delta / 2) / time_delta);
 	return STATUS_SUCCESS;
 }
 
@@ -622,6 +528,20 @@ void getSysInfo()
 	printf("OemId :    %u\n", sysInfo.dwOemId);
 	printf("wReserved :   %u\n", sysInfo.wReserved);
 }
+
+/*
+typedef struct _MEMORYSTATUSEX {
+	DWORD dwLength;
+	DWORD dwMemoryLoad;			//0~100之间的值，用来指示当前系统内存的使用率
+	DWORDLONG ullTotalPhys;		//总物理内存大小，字节单位
+	DWORDLONG ullAvailPhys;		//可用物理内存大小，字节单位
+	DWORDLONG ullTotalPageFile;	//页面文件总字节数
+	DWORDLONG ullAvailPageFile;	//页面文件可用字节数
+	DWORDLONG ullTotalVirtual;	//用户态虚拟地址空间大小，字节单位
+	DWORDLONG ullAvailVirtual;	//用户态虚拟地址空间的实际可用大小，字节单位
+	DWORDLONG ullAvailExtendedVirtual;	//用户态虚拟地址扩展空间的实际可用大小，字节单位
+} MEMORYSTATUSEX, *LPMEMORYSTATUSEX;
+*/
 
 /*
 typedef struct _SYSTEM_INFO {

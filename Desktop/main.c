@@ -7,9 +7,13 @@ int main()
 	status = Init();
 	printf("Init Done 0x%x\n", status);
 	
+	//总CPU占有率和内存占用
+	status = PsGetUsage();
+	printf("PsGetUsage Done 0x%x\n", status);
+
 	//进程枚举
-	status = PsEnum();
-	printf("PsEnum Done 0x%x\n", status);
+	//status = PsEnum();
+	//printf("PsEnum Done 0x%x\n", status);
 
 	//根据进程id枚举其线程
 	//status = ThdEnumByPid((HANDLE)2320);
@@ -31,7 +35,7 @@ int main()
 	//status = PsTerminateByPid((HANDLE)2320);
 	//printf("PsTerminateByPid Done 0x%x\n", status);
 
-	getSysInfo();
+	//getSysInfo();
 
 	status = End();
 	printf("End Done 0x%x\n", status);

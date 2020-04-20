@@ -62,7 +62,10 @@ MYMODINFO glModListEntry;
 HANDLE hDevice;
 //数据接收缓冲区指针
 PCHAR glBuf;
-
+//全局CPU利用率相关变量
+DOUBLE preFtIdle;
+DOUBLE preFtUser;
+DOUBLE preFtKernel;
 
 //全局单链表清空
 VOID EmptyGlProc();
@@ -111,25 +114,10 @@ NTSTATUS PsTerminateByPid(IN HANDLE pid);
 
 
 /*用户层数据函数*/
-//CPU利用率相关函数
-//时间转换
-//将传入的文件时间的低位输出
-static __int64 file_time_2_utc(IN const FILETIME *ftime);
-
-//获取cpu核数
-static int get_processor_number();
-
-//内存占有相关函数
-//获取内存占有
-int get_memory_usage(IN HANDLE hProcess, OUT SIZE_T *pMem, OUT SIZE_T *pVMem);
-
-//给定pid，获取其CPU占有率与内存占有
-NTSTATUS PsGetUsage(
-	IN HANDLE pid,
-	OUT int *pCpuUsage,
-	OUT SIZE_T *pMem,
-	OUT SIZE_T *pVMem
-);
+//转换文件时间为double类型
+DOUBLE FileTimeToDouble(FILETIME* pFiletime);
+//总CPU占有率与内存占有
+NTSTATUS PsGetUsage();
 
 //获取系统信息
 void getSysInfo();
